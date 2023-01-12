@@ -340,6 +340,8 @@ np2srv_tls_ctn_str2map_type(const char *map_type)
         ret = NC_TLS_CTN_SAN_ANY;
     } else if (!strcmp(map_type, "common-name")) {
         ret = NC_TLS_CTN_COMMON_NAME;
+    }else if (!strcmp(map_type, "object-identifier")) {
+        ret = NC_TLS_CTN_ARBITRARY_EXT;
     }
 
     return ret;
