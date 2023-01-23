@@ -162,7 +162,7 @@ sub_ntf_sr_subscribe(sr_session_ctx_t *user_sess, const char *stream, const char
 {
     const struct ly_ctx *ly_ctx;
     const struct lys_module *ly_mod;
-    int rc, suspended = 0;
+    int rc = SR_ERR_OK, suspended = 0;
     const sr_error_info_t *err_info;
     struct ly_set mod_set = {0};
     uint32_t idx;
@@ -359,8 +359,7 @@ sub_ntf_rpc_filter2xpath(sr_session_ctx_t *user_sess, const struct lyd_node *rpc
     if (!strcmp(node->schema->name, "stream-subtree-filter")) {
         /* subtree */
         if (((struct lyd_node_any *)node)->value_type == LYD_ANYDATA_DATATREE) {
-            if (op_filter_create_subtree(((struct lyd_node_any *)node)->value.tree, &filter)) {
-                rc = SR_ERR_INTERNAL;
+            if ((rc = op_filter_create_subtree(((struct lyd_node_any *)node)->value.tree, ev_sess, &filter))) {
                 goto cleanup;
             }
             if ((rc = op_filter_filter2xpath(&filter, xpath))) {

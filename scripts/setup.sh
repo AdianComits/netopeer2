@@ -11,7 +11,7 @@ fi
 if [ -n "$SYSREPOCTL_EXECUTABLE" ]; then
     SYSREPOCTL="$SYSREPOCTL_EXECUTABLE"
 # avoid problems with sudo PATH
-elif [ `id -u` -eq 0 ]; then
+elif [ `id -u` -eq 0 ] && [ -n "$USER" ] && [ `command -v su` ]; then
     SYSREPOCTL=`su -c 'command -v sysrepoctl' -l $USER`
 else
     SYSREPOCTL=`command -v sysrepoctl`
@@ -29,7 +29,6 @@ MODULES=(
 "nc-notifications@2008-07-14.yang"
 "notifications@2008-07-14.yang"
 "ietf-x509-cert-to-name@2014-12-10.yang"
-"ietf-crypto-types@2019-07-02.yang"
 "ietf-keystore@2019-07-02.yang -e keystore-supported"
 "ietf-truststore@2019-07-02.yang -e truststore-supported -e x509-certificates"
 "ietf-tcp-common@2019-07-02.yang -e keepalives-supported"

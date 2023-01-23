@@ -70,7 +70,6 @@ extern int done;
 LYD_FORMAT output_format = LYD_XML;
 uint32_t output_flag;
 char *config_editor;
-char *ext_data_path;
 struct nc_session *session;
 volatile int interleave;
 int timed;
@@ -219,9 +218,9 @@ cli_ntf_clb(struct nc_session *UNUSED(session), const struct lyd_node *envp, con
     int was_rawmode = 0;
 
     if (output == stdout) {
-        if (ls.rawmode) {
+        if (lss.rawmode) {
             was_rawmode = 1;
-            linenoiseDisableRawMode(ls.ifd);
+            linenoiseDisableRawMode(lss.ifd);
             printf("\n");
         } else {
             was_rawmode = 0;
@@ -234,7 +233,7 @@ cli_ntf_clb(struct nc_session *UNUSED(session), const struct lyd_node *envp, con
     fflush(output);
 
     if ((output == stdout) && was_rawmode) {
-        linenoiseEnableRawMode(ls.ifd);
+        linenoiseEnableRawMode(lss.ifd);
         linenoiseRefreshLine();
     }
 
@@ -473,27 +472,6 @@ cleanup:
     return ret;
 }
 
-static LY_ERR
-cli_ext_data_clb(const struct lysc_ext_instance *ext, void *user_data, void **ext_data, ly_bool *ext_data_free)
-{
-    const char *path = user_data;
-    struct lyd_node *data;
-    LY_ERR r;
-
-    if (strcmp(ext->def->module->name, "ietf-yang-schema-mount") || strcmp(ext->def->name, "mount-point")) {
-        return LY_EINVAL;
-    }
-
-    /* parse the data file */
-    if ((r = lyd_parse_data_path(ext->def->module->ctx, path, 0, LYD_PARSE_STRICT, LYD_VALIDATE_PRESENT, &data))) {
-        return r;
-    }
-
-    *ext_data = data;
-    *ext_data_free = 1;
-    return LY_SUCCESS;
-}
-
 static char *
 trim_top_elem(char *data, const char *top_elem, const char *top_elem_ns)
 {
@@ -699,7 +677,7 @@ static void
 cmd_listen_help(void)
 {
 #if defined (NC_ENABLED_SSH) && defined (NC_ENABLED_TLS)
-    printf("listen [--help] [--timeout <sec>] [--host <hostname>] [--port <num>]\n");
+    printf("listen [--help] [--timeout <sec>] [--host <ip-address>] [--port <num>]\n");
     printf("   SSH [--ssh] [--login <username>]\n");
     printf("   TLS  --tls  [--cert <cert_path> [--key <key_path>]] [--trusted <trusted_CA_store.pem>] [--peername <server-hostname>]\n");
 #elif defined (NC_ENABLED_SSH)
@@ -1289,12 +1267,6 @@ cmd_userrpc_help(void)
 }
 
 static void
-cmd_extdata_help(void)
-{
-    printf("ext-data [--help] [--path <file>]\n");
-}
-
-static void
 cmd_timed_help(void)
 {
     printf("timed [--help] [on | off]\n");
@@ -1779,10 +1751,6 @@ cmd_connect_listen_ssh(struct arglist *cmd, int is_connect)
             }
             return EXIT_FAILURE;
         }
-    }
-
-    if (ext_data_path) {
-        ly_ctx_set_ext_data_clb((struct ly_ctx *)nc_session_get_ctx(session), cli_ext_data_clb, ext_data_path);
     }
 
     return EXIT_SUCCESS;
@@ -2611,10 +2579,6 @@ cmd_connect_listen_tls(struct arglist *cmd, int is_connect)
         }
     }
 
-    if (ext_data_path) {
-        ly_ctx_set_ext_data_clb((struct ly_ctx *)nc_session_get_ctx(session), cli_ext_data_clb, ext_data_path);
-    }
-
     ret = EXIT_SUCCESS;
 
 error_cleanup:
@@ -2673,10 +2637,6 @@ cmd_connect_listen_unix(struct arglist *cmd, int is_connect)
     if (session == NULL) {
         ERROR(func_name, "Connecting to %s failed.", path);
         goto error_cleanup;
-    }
-
-    if (ext_data_path) {
-        ly_ctx_set_ext_data_clb((struct ly_ctx *)nc_session_get_ctx(session), cli_ext_data_clb, ext_data_path);
     }
 
     ret = EXIT_SUCCESS;
@@ -6690,35 +6650,6 @@ fail:
 }
 
 static int
-cmd_extdata(const char *arg, char **UNUSED(tmp_config_file))
-{
-    char *cmd, *args = strdupa(arg), *ptr = NULL;
-
-    cmd = strtok_r(args, " ", &ptr);
-    cmd = strtok_r(NULL, " ", &ptr);
-    if (cmd == NULL) {
-        printf("Current file: ");
-        printf("%s\n", ext_data_path ? ext_data_path : "<none>");
-    } else if ((strcmp(cmd, "--help") == 0) || (strcmp(cmd, "-h") == 0)) {
-        cmd_extdata_help();
-    } else {
-        if (access(cmd, F_OK) == -1) {
-            ERROR(__func__, "Unable to access file \"%s\" (%s).", cmd, strerror(errno));
-            return EXIT_FAILURE;
-        }
-
-        free(ext_data_path);
-        ext_data_path = strdup(cmd);
-    }
-
-    if (session) {
-        ly_ctx_set_ext_data_clb((struct ly_ctx *)nc_session_get_ctx(session), cli_ext_data_clb, ext_data_path);
-    }
-
-    return EXIT_SUCCESS;
-}
-
-static int
 cmd_timed(const char *arg, char **UNUSED(tmp_config_file))
 {
     char *args = strdupa(arg);
@@ -6744,55 +6675,59 @@ cmd_timed(const char *arg, char **UNUSED(tmp_config_file))
 COMMAND commands[] = {
 #ifdef NC_ENABLED_SSH
     {"auth", cmd_auth, cmd_auth_help, "Manage SSH authentication options"},
-    {"knownhosts", cmd_knownhosts, cmd_knownhosts_help, "Manage the user knownhosts file"},
 #endif
+    {"cancel-commit", cmd_cancelcommit, cmd_cancelcommit_help, "ietf-netconf <cancel-commit> operation"},
 #ifdef NC_ENABLED_TLS
     {"cert", cmd_cert, cmd_cert_help, "Manage trusted or your own certificates"},
+#endif
+    {"commit", cmd_commit, cmd_commit_help, "ietf-netconf <commit> operation"},
+    {"connect", cmd_connect, cmd_connect_help, "Connect to a NETCONF server"},
+    {"copy-config", cmd_copyconfig, cmd_copyconfig_help, "ietf-netconf <copy-config> operation"},
+#ifdef NC_ENABLED_TLS
     {"crl", cmd_crl, cmd_crl_help, "Manage Certificate Revocation List directory"},
 #endif
-    {"outputformat", cmd_outputformat, cmd_outputformat_help, "Set the output format of all the data"},
-    {"searchpath", cmd_searchpath, cmd_searchpath_help, "Set the search path for models"},
-    {"verb", cmd_verb, cmd_verb_help, "Change verbosity"},
-    {"version", cmd_version, NULL, "Print Netopeer2 CLI version"},
-    {"disconnect", cmd_disconnect, NULL, "Disconnect from a NETCONF server"},
-    {"status", cmd_status, NULL, "Display information about the current NETCONF session"},
-    {"connect", cmd_connect, cmd_connect_help, "Connect to a NETCONF server"},
-    {"listen", cmd_listen, cmd_listen_help, "Wait for a Call Home connection from a NETCONF server"},
-    {"quit", cmd_quit, NULL, "Quit the program"},
-    {"help", cmd_help, NULL, "Display commands description"},
-    {"editor", cmd_editor, cmd_editor_help, "Set the text editor for working with XML data"},
-    {"cancel-commit", cmd_cancelcommit, cmd_cancelcommit_help, "ietf-netconf <cancel-commit> operation"},
-    {"commit", cmd_commit, cmd_commit_help, "ietf-netconf <commit> operation"},
-    {"copy-config", cmd_copyconfig, cmd_copyconfig_help, "ietf-netconf <copy-config> operation"},
     {"delete-config", cmd_deleteconfig, cmd_deleteconfig_help, "ietf-netconf <delete-config> operation"},
-    {"discard-changes", cmd_discardchanges, cmd_discardchanges_help, "ietf-netconf <discard-changes> operation"},
-    {"edit-config", cmd_editconfig, cmd_editconfig_help, "ietf-netconf <edit-config> operation"},
-    {"get", cmd_get, cmd_get_help, "ietf-netconf <get> operation"},
-    {"get-config", cmd_getconfig, cmd_getconfig_help, "ietf-netconf <get-config> operation"},
-    {"kill-session", cmd_killsession, cmd_killsession_help, "ietf-netconf <kill-session> operation"},
-    {"lock", cmd_lock, cmd_lock_help, "ietf-netconf <lock> operation"},
-    {"unlock", cmd_unlock, cmd_unlock_help, "ietf-netconf <unlock> operation"},
-    {"validate", cmd_validate, cmd_validate_help, "ietf-netconf <validate> operation"},
-    {"subscribe", cmd_subscribe, cmd_subscribe_help, "notifications <create-subscription> operation"},
-    {"get-schema", cmd_getschema, cmd_getschema_help, "ietf-netconf-monitoring <get-schema> operation"},
-    {"get-data", cmd_getdata, cmd_getdata_help, "ietf-netconf-nmda <get-data> operation"},
-    {"edit-data", cmd_editdata, cmd_editdata_help, "ietf-netconf-nmda <edit-data> operation"},
-    {"establish-sub", cmd_establishsub, cmd_establishsub_help,
-        "ietf-subscribed-notifications <establish-subscription> operation"},
-    {"modify-sub", cmd_modifysub, cmd_modifysub_help, "ietf-subscribed-notifications <modify-subscription> operation"},
     {"delete-sub", cmd_deletesub, cmd_deletesub_help, "ietf-subscribed-notifications <delete-subscription> operation"},
-    {"kill-sub", cmd_killsub, cmd_killsub_help, "ietf-subscribed-notifications <kill-subscription> operation"},
+    {"discard-changes", cmd_discardchanges, cmd_discardchanges_help, "ietf-netconf <discard-changes> operation"},
+    {"disconnect", cmd_disconnect, NULL, "Disconnect from a NETCONF server"},
+    {"edit-config", cmd_editconfig, cmd_editconfig_help, "ietf-netconf <edit-config> operation"},
+    {"edit-data", cmd_editdata, cmd_editdata_help, "ietf-netconf-nmda <edit-data> operation"},
+    {"editor", cmd_editor, cmd_editor_help, "Set the text editor for working with XML data"},
     {"establish-push", cmd_establishpush, cmd_establishpush_help,
         "ietf-subscribed-notifications <establish-subscription> operation with ietf-yang-push augments"},
+    {"establish-sub", cmd_establishsub, cmd_establishsub_help,
+        "ietf-subscribed-notifications <establish-subscription> operation"},
+    {"exit", cmd_quit, NULL, "Quit the program"},
+    {"get", cmd_get, cmd_get_help, "ietf-netconf <get> operation"},
+    {"get-config", cmd_getconfig, cmd_getconfig_help, "ietf-netconf <get-config> operation"},
+    {"get-data", cmd_getdata, cmd_getdata_help, "ietf-netconf-nmda <get-data> operation"},
+    {"get-schema", cmd_getschema, cmd_getschema_help, "ietf-netconf-monitoring <get-schema> operation"},
+    {"help", cmd_help, NULL, "Display commands description"},
+    {"kill-session", cmd_killsession, cmd_killsession_help, "ietf-netconf <kill-session> operation"},
+    {"kill-sub", cmd_killsub, cmd_killsub_help, "ietf-subscribed-notifications <kill-subscription> operation"},
+#ifdef NC_ENABLED_SSH
+    {"knownhosts", cmd_knownhosts, cmd_knownhosts_help, "Manage the user knownhosts file"},
+#endif
+    {"listen", cmd_listen, cmd_listen_help, "Wait for a Call Home connection from a NETCONF server"},
+    {"lock", cmd_lock, cmd_lock_help, "ietf-netconf <lock> operation"},
     {"modify-push", cmd_modifypush, cmd_modifypush_help,
         "ietf-subscribed-notifications <modify-subscription> operation with ietf-yang-push augments"},
+    {"modify-sub", cmd_modifysub, cmd_modifysub_help, "ietf-subscribed-notifications <modify-subscription> operation"},
+    {"outputformat", cmd_outputformat, cmd_outputformat_help, "Set the output format of all the data"},
     {"resync-sub", cmd_resyncsub, cmd_resyncsub_help, "ietf-yang-push <resync-subscription> operation"},
-    {"user-rpc", cmd_userrpc, cmd_userrpc_help, "Send your own content in an RPC envelope"},
-    {"ext-data", cmd_extdata, cmd_extdata_help, "Set path to a data file with libyang ext data"},
+    {"searchpath", cmd_searchpath, cmd_searchpath_help, "Set the search path for models"},
+    {"status", cmd_status, NULL, "Display information about the current NETCONF session"},
+    {"subscribe", cmd_subscribe, cmd_subscribe_help, "notifications <create-subscription> operation"},
     {"timed", cmd_timed, cmd_timed_help, "Time all the commands (that communicate with a server) from issuing an RPC"
         " to getting a reply"},
+    {"unlock", cmd_unlock, cmd_unlock_help, "ietf-netconf <unlock> operation"},
+    {"user-rpc", cmd_userrpc, cmd_userrpc_help, "Send your own content in an RPC envelope"},
+    {"validate", cmd_validate, cmd_validate_help, "ietf-netconf <validate> operation"},
+    {"verb", cmd_verb, cmd_verb_help, "Change verbosity"},
+    {"version", cmd_version, NULL, "Print Netopeer2 CLI version"},
+
     /* synonyms for previous commands */
     {"?", cmd_help, NULL, "Display commands description"},
-    {"exit", cmd_quit, NULL, "Quit the program"},
+    {"quit", cmd_quit, NULL, "Quit the program"},
     {NULL, NULL, NULL, NULL}
 };
