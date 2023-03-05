@@ -2589,6 +2589,199 @@ error_cleanup:
     return ret;
 }
 
+/* TOFU new command */
+static int
+cmd_connect_listen_tls_60802(struct arglist *cmd, int is_connect)
+{
+    const char *func_name, *optstring, *host = NULL, *trusted_store = NULL, *peername = NULL;
+    static unsigned short listening = 0;
+    DIR *dir = NULL;
+    struct dirent *d;
+    int c, n, timeout = 0, ret = EXIT_FAILURE;
+    char *cert = NULL, *key = NULL, *trusted_dir = NULL, *crl_dir = NULL;
+    unsigned short port = 0;
+    int option_index = 0;
+    struct option long_options[] = {
+        {"tls", 0, 0, 't'},
+        {"host", 1, 0, 'o'},
+        {"port", 1, 0, 'p'},
+        {"cert", 1, 0, 'c'},
+        {"key", 1, 0, 'k'},
+        {"trusted", 1, 0, 'r'},
+        {"peername", 1, 0, 'e'},
+        {"timeout", 1, 0, 'i'},
+        {0, 0, 0, 0}
+    };
+
+    if (is_connect) {
+        func_name = "cmd_connect_60802";
+
+        /* remove peername and timeout option for use in connect */
+        memset(&long_options[6], 0, sizeof *long_options);
+        memset(&long_options[7], 0, sizeof *long_options);
+        optstring = "to:p:c:k:r:";
+    } else {
+        func_name = "cmd_listen";
+        optstring = "to:p:c:k:r:e:i:";
+    }
+
+    /* set back to start to be able to use getopt() repeatedly */
+    optind = 0;
+
+    while ((c = getopt_long(cmd->count, cmd->list, optstring, long_options, &option_index)) != -1) {
+        switch (c) {
+        case 't':
+            /* we know already */
+            break;
+        case 'o':
+            host = optarg;
+            break;
+        case 'p':
+            port = (unsigned short)atoi(optarg);
+            if (!is_connect && listening && (listening != port)) {
+                listening = 0;
+            }
+            break;
+        case 'c':
+            if (asprintf(&cert, "%s", optarg) == -1) {
+                goto error_cleanup;
+            }
+            break;
+        case 'k':
+            if (asprintf(&key, "%s", optarg) == -1) {
+                goto error_cleanup;
+            }
+            break;
+        case 'r':
+            trusted_store = optarg;
+            break;
+        case 'e':
+            peername = optarg;
+            break;
+        case 'i':
+            timeout = atoi(optarg);
+            break;
+        default:
+            ERROR(func_name, "Unknown option -%c.", c);
+            if (is_connect) {
+                cmd_connect_help();
+            } else {
+                cmd_listen_help();
+            }
+            goto error_cleanup;
+        }
+    }
+
+    if (!cert) {
+        if (key) {
+            ERROR(func_name, "Key specified without a certificate.");
+            goto error_cleanup;
+        }
+        get_default_client_cert(&cert, &key);
+        if (!cert) {
+            ERROR(func_name, "Could not find the default client certificate, check with \"cert displayown\" command.");
+            goto error_cleanup;
+        }
+    }
+    if (!trusted_store) {
+        trusted_dir = get_default_trustedCA_dir(NULL);
+        if (!(dir = opendir(trusted_dir))) {
+            ERROR(func_name, "Could not use the trusted CA directory.");
+            goto error_cleanup;
+        }
+
+        /* check whether we have any trusted CA, verification should fail otherwise */
+        n = 0;
+        while ((d = readdir(dir))) {
+            if (++n > 2) {
+                break;
+            }
+        }
+        closedir(dir);
+        if (n <= 2) {
+            ERROR(func_name, "Trusted CA directory empty, use \"cert add\" command to add certificates.");
+        }
+    } else {
+        if (eaccess(trusted_store, R_OK)) {
+            ERROR(func_name, "Could not access trusted CA store \"%s\": %s", trusted_store, strerror(errno));
+            goto error_cleanup;
+        }
+        if ((strlen(trusted_store) < 5) || strcmp(trusted_store + strlen(trusted_store) - 4, ".pem")) {
+            ERROR(func_name, "Trusted CA store in an unknown format.");
+            goto error_cleanup;
+        }
+    }
+    if (!(crl_dir = get_default_CRL_dir(NULL))) {
+        ERROR(func_name, "Could not use the CRL directory.");
+        goto error_cleanup;
+    }
+
+    if (is_connect) {
+        nc_client_tls_set_cert_key_paths(cert, key);
+        nc_client_tls_set_trusted_ca_paths(trusted_store, trusted_dir);
+        nc_client_tls_set_crl_paths(NULL, crl_dir);
+
+        /* default port */
+        if (!port) {
+            port = NC_PORT_TLS;
+        }
+
+        /* default host */
+        if (!host) {
+            host = "localhost";
+        }
+
+        /* create the session */
+        session = nc_connect_tls_tofu(host, port, NULL);
+        if (session == NULL) {
+            ERROR(func_name, "Connecting to the %s:%d failed.", host, port);
+            goto error_cleanup;
+        }
+    } else {
+        nc_client_tls_ch_set_cert_key_paths(cert, key);
+        nc_client_tls_ch_set_trusted_ca_paths(trusted_store, trusted_dir);
+        nc_client_tls_ch_set_crl_paths(NULL, crl_dir);
+
+        /* default timeout */
+        if (!timeout) {
+            timeout = CLI_CH_TIMEOUT;
+        }
+
+        /* default port */
+        if (!port) {
+            port = NC_PORT_CH_TLS;
+        }
+
+        /* default host */
+        if (!host) {
+            host = "::0";
+        }
+
+        /* create the session */
+        nc_client_tls_ch_add_bind_hostname_listen(host, port, peername);
+        ERROR(func_name, "Waiting %ds for a TLS Call Home connection on port %u...", timeout, port);
+        ret = nc_accept_callhome(timeout * 1000, NULL, &session);
+        nc_client_tls_ch_del_bind(host, port);
+        if (ret != 1) {
+            if (ret == 0) {
+                ERROR(func_name, "Receiving TLS Call Home on port %d timeout elapsed.", port);
+            } else {
+                ERROR(func_name, "Receiving TLS Call Home on port %d failed.", port);
+            }
+            goto error_cleanup;
+        }
+    }
+
+    ret = EXIT_SUCCESS;
+
+error_cleanup:
+    free(trusted_dir);
+    free(crl_dir);
+    free(cert);
+    free(key);
+    return ret;
+}
+
 #endif /* NC_ENABLED_TLS */
 
 static int
@@ -2939,6 +3132,143 @@ cmd_connect_listen(const char *arg, int is_connect)
     clear_arglist(&cmd);
     return ret;
 }
+
+
+static int
+cmd_connect_first_listen(const char *arg, int is_connect)
+{
+    const char *func_name = (is_connect ? "cmd_connect_60802" : "cmd_listen");
+    int c, ret = EXIT_SUCCESS;
+    NC_TRANSPORT_IMPL ti = 0;
+    const char *optstring;
+    struct arglist cmd;
+    struct option long_options[] = {
+        {"help", 0, 0, 'h'},
+#ifdef NC_ENABLED_SSH
+        {"ssh", 0, 0, 's'},
+        {"timeout", 1, 0, 'i'},
+        {"host", 1, 0, 'o'},
+        {"port", 1, 0, 'p'},
+        {"login", 1, 0, 'l'},
+#endif
+#ifdef NC_ENABLED_TLS
+        {"tls", 0, 0, 't'},
+        {"timeout", 1, 0, 'i'},
+        {"host", 1, 0, 'o'},
+        {"port", 1, 0, 'p'},
+        {"cert", 1, 0, 'c'},
+        {"key", 1, 0, 'k'},
+        {"trusted", 1, 0, 'r'},
+        {"peername", 1, 0, 'e'},
+#endif
+        {"unix", 0, 0, 'u'},
+        {"socket", 1, 0, 'S'},
+        {0, 0, 0, 0}
+    };
+    int option_index = 0;
+
+    /* set back to start to be able to use getopt() repeatedly */
+    optind = 0;
+
+    if (session) {
+        ERROR(func_name, "Already connected to %s.",
+                nc_session_get_host(session) ?: nc_session_get_path(session));
+        return EXIT_FAILURE;
+    }
+
+    /* process given arguments */
+    init_arglist(&cmd);
+    if (addargs(&cmd, "%s", arg)) {
+        return EXIT_FAILURE;
+    }
+
+    ret = -1;
+
+#if defined (NC_ENABLED_SSH) && defined (NC_ENABLED_TLS)
+    optstring = "hsti:o:p:l:c:k:r:e:uS:";
+#elif defined (NC_ENABLED_SSH)
+    optstring = "hsi:o:p:l:uS:";
+#elif defined (NC_ENABLED_TLS)
+    optstring = "hti:o:p:c:k:r:e:uS:";
+#else
+    optstring = "hi:o:p:c:k:r:e:uS:";
+#endif
+
+    while (!ti && ((c = getopt_long(cmd.count, cmd.list, optstring, long_options, &option_index)) != -1)) {
+        switch (c) {
+        case 'h':
+            ti = NC_TI_FD;
+            break;
+#ifdef NC_ENABLED_SSH
+        case 's':
+            ti = NC_TI_LIBSSH;
+            break;
+#endif
+#ifdef NC_ENABLED_TLS
+        case 't':
+            ti = NC_TI_OPENSSL;
+            break;
+#endif
+        case 'u':
+            ti = NC_TI_UNIX;
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (!ti) {
+        /* default transport */
+#ifdef NC_ENABLED_SSH
+        ti = NC_TI_LIBSSH;
+#elif defined (NC_ENABLED_TLS)
+        ti = NC_TI_OPENSSL;
+#endif
+    }
+
+    switch (ti) {
+    case NC_TI_FD:
+        if (is_connect) {
+            cmd_connect_help();
+        } else {
+            cmd_listen_help();
+        }
+        break;
+    case NC_TI_UNIX:
+        ret = cmd_connect_listen_unix(&cmd, is_connect);
+        break;
+#ifdef NC_ENABLED_SSH
+    case NC_TI_LIBSSH:
+        ret = cmd_connect_listen_ssh(&cmd, is_connect);
+        break;
+#endif
+#ifdef NC_ENABLED_TLS
+    case NC_TI_OPENSSL:
+        ret = cmd_connect_listen_tls_60802(&cmd, is_connect);
+        break;
+#endif
+    default:
+        ERROR(func_name, "Unknown transport.");
+        ret = EXIT_FAILURE;
+        break;
+    }
+    if (!ret) {
+        interleave = 1;
+    }
+
+    clear_arglist(&cmd);
+    return ret;
+}
+
+
+static int
+cmd_connect_60802(const char *arg, char **UNUSED(tmp_config_file))
+{
+    return cmd_connect_first_listen(arg, 1);
+}
+
+
+
 
 static int
 cmd_connect(const char *arg, char **UNUSED(tmp_config_file))
@@ -6682,6 +7012,7 @@ COMMAND commands[] = {
 #endif
     {"commit", cmd_commit, cmd_commit_help, "ietf-netconf <commit> operation"},
     {"connect", cmd_connect, cmd_connect_help, "Connect to a NETCONF server"},
+    {"connect-first",cmd_connect_60802,cmd_connect_help,"connect to NETCONF server for the 1st time"},
     {"copy-config", cmd_copyconfig, cmd_copyconfig_help, "ietf-netconf <copy-config> operation"},
 #ifdef NC_ENABLED_TLS
     {"crl", cmd_crl, cmd_crl_help, "Manage Certificate Revocation List directory"},
