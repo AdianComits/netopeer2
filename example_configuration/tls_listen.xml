@@ -14,37 +14,13 @@
                 <tls-server-parameters>
                     <server-identity>
                         <keystore-reference>
-                            <asymmetric-key>serverkey</asymmetric-key>
-                            <certificate>servercert</certificate>
+                            <asymmetric-key>IDevID-key</asymmetric-key>
+                            <certificate>IDevID-cert</certificate>
                         </keystore-reference>
                     </server-identity>
                     <client-authentication>
                         <required/>
                         <ca-certs>cacerts</ca-certs>
-                        <client-certs>clientcerts</client-certs>
-                        <cert-maps>
-                            <cert-to-name>
-                                <id>1</id>
-                                <fingerprint>02:20:E1:AD:CC:92:71:E9:EA:6A:85:DF:A7:FF:8C:BB:B9:D5:E4:EE:74</fingerprint>
-                                <map-type xmlns:x509c2n="urn:ietf:params:xml:ns:yang:ietf-x509-cert-to-name">x509c2n:specified</map-type>
-                                <name>tls-test</name>
-                            </cert-to-name>
-                            <cert-to-name>
-                                <id>2</id>
-                                <fingerprint>02:BC:B3:0C:52:C4:5A:D3:F8:94:79:D1:10:0B:D5:0F:68:66:10:58:CA</fingerprint>
-                                <map-type xmlns:x509c2n="urn:ietf:params:xml:ns:yang:ietf-x509-cert-to-name">x509c2n:object-identifier</map-type>
-                            </cert-to-name>
-                            <cert-to-name>
-                                <id>3</id>
-                                <fingerprint>02:BC:B3:0C:52:C4:5A:D3:F8:94:79:D1:10:0B:D5:0F:68:66:10:58:CA</fingerprint>
-                                <map-type xmlns:x509c2n="urn:ietf:params:xml:ns:yang:ietf-x509-cert-to-name">x509c2n:object-identifier</map-type>
-                            </cert-to-name>
-                            <cert-to-name>
-                                <id>4</id>
-                                <fingerprint>02:BC:B3:0C:52:C4:5A:D3:F8:94:79:D1:10:0B:D5:0F:68:66:10:58:CA</fingerprint>
-                                <map-type xmlns:x509c2n="urn:ietf:params:xml:ns:yang:ietf-x509-cert-to-name">x509c2n:object-identifier</map-type>
-                            </cert-to-name>
-                        </cert-maps>
                     </client-authentication>
                 </tls-server-parameters>
             </tls>
